@@ -25,6 +25,59 @@ char *repo_slash;                       /* Pointer to repository separator */
 char *git_dir;                          /* Pointer to .git extension */
 char *filename;                         /* Extracted filename */
 char *extension;                        /* File extension */
+struct timespec __time_start = { 0 },   /* Time start - duration calculation */
+                __time_stop  = { 0 };   /* Time Stop   - duration calculation */
+double dency_dur_calculation;           /* Time Start & Stop Calculation */
+char json_item[WG_PATH_MAX];            /* Json item's */
+
+/**
+ * Calculates the duration between two recorded timestamps.
+ * 
+ * This function computes the elapsed time by taking the difference between
+ * a stop time (__time_stop) and a start time (__time_start), both of which
+ * are expected to be timespec structures containing seconds (tv_sec) and
+ * nanoseconds (tv_nsec).
+ *
+ * The duration is calculated as:
+ *   (stop_seconds - start_seconds) + (stop_nanoseconds - start_nanoseconds) / 1e9
+ *
+ * The result is stored in the global variable `dency_dur_calculation` as a
+ * floating-point value representing the duration in seconds.
+ *
+ * Preconditions:
+ * - `__time_start` and `__time_stop` should be properly initialized timespec
+ *   structures, with `__time_stop` representing a later point in time than
+ *   `__time_start`.
+ * - The subtraction of nanoseconds may produce a negative value if the
+ *   nanosecond component of `__time_stop` is less than that of `__time_start`.
+ *   However, the formula still works correctly because the seconds difference
+ *   compensates for this, and the division by 1e9 yields the correct fractional
+ *   part.
+ *
+ * Postconditions:
+ * - The global variable `dency_dur_calculation` will contain the computed
+ *   duration in seconds.
+ *
+ * Example:
+ *   __time_start = { .tv_sec = 1, .tv_nsec = 500000000 }  (1.5 seconds)
+ *   __time_stop  = { .tv_sec = 3, .tv_nsec = 750000000 }  (3.75 seconds)
+ *   Result: dency_dur_calculation = (3 - 1) + (750000000 - 500000000) / 1e9
+ *                                 = 2 + 250000000 / 1e9
+ *                                 = 2 + 0.25
+ *                                 = 2.25 seconds
+ *
+ * Note:
+ * - This function does not handle cases where the timestamps are invalid
+ *   (e.g., `__time_stop` earlier than `__time_start`). The caller must ensure
+ *   the timestamps are valid for a meaningful duration calculation.
+ */
+void calculation_dur_time(void) {
+        // Calculate the duration by combining the differences in seconds and nanoseconds.
+        // The nanosecond difference is converted to seconds by dividing by 1e9.
+        dency_dur_calculation = (__time_stop.tv_sec - __time_start.tv_sec) +
+                                (__time_stop.tv_nsec - __time_start.tv_nsec) / 1e9;
+        return;
+}
 
 /* 
  * Convert Windows path separators to Unix/Linux style
@@ -1085,8 +1138,6 @@ void dump_file_type(const char *path,
                 char *pattern, char *exclude, char *cwd,
                 char *place_dir, int root)
 {
-        char json_item[WG_PATH_MAX];
-
         wg_sef_fdir_reset();
 
         /* Search for files matching pattern */
@@ -1111,50 +1162,111 @@ void dump_file_type(const char *path,
                                         "-f \"%s\" \"%s/%s/\"",
                                         wgconfig.wg_sef_found_list[i], cwd, place_dir);
 #endif
-                                struct timespec __time_start = { 0 }, __time_end = { 0 };
-                                double rate_duration;
+                                __time_start.tv_sec  = 0;
+                                __time_start.tv_nsec = 0;
 
                                 /* Time the move operation */
                                 clock_gettime(CLOCK_MONOTONIC, &__time_start);
-                                wg_run_command(dency_command);
-                                clock_gettime(CLOCK_MONOTONIC, &__time_end);
-
-                                rate_duration = (__time_end.tv_sec - __time_start.tv_sec) +
-                                                (__time_end.tv_nsec - __time_start.tv_nsec) / 1e9;
+                                        wg_run_command(dency_command);
+                                clock_gettime(CLOCK_MONOTONIC, &__time_stop);
 
                                 pr_color(stdout, FCOLOUR_CYAN, " [REPLICATE] Plugins %s -> %s - %s [Finished at %.3fs]\n",
-                                                 wgconfig.wg_sef_found_list[i], cwd, place_dir, rate_duration);
+                                                 wgconfig.wg_sef_found_list[i], cwd, place_dir, dency_dur_calculation);
                         } else {
                                 /* Move to current directory */
+
+                                char *basename_lower = strdup(basename);
+                                /* Convert to lowercase for case-insensitive comparison */
+                                for (int j = 0; basename_lower[j]; j++)
+                                        {
+                                                basename_lower[j] = tolower(basename_lower[j]);
+                                        }
+                                
+                                /* Prefix checking */
+                                int root_plug_has_prefix = 0;
+                                if (strncmp(basename_lower, "lib", 3) == 0 || 
+                                    strncmp(basename_lower, "log", 3) == 0 || 
+                                    strncmp(basename_lower, "conf", 4) == 0 ||
+                                    strncmp(basename_lower, "config", 6) == 0)
+                                {
+                                        root_plug_has_prefix = 1;
+                                }
+
+                                if (root_plug_has_prefix) {
 #ifdef WG_WINDOWS
-                                snprintf(dency_command, sizeof(dency_command),
-                                        "move "
-                                        "/Y \"%s\" \"%s\"",
-                                        wgconfig.wg_sef_found_list[i], cwd);
+                                        snprintf(dency_command, sizeof(dency_command),
+                                                "move "
+                                                "/Y \"%s\" \"%s\"",
+                                                wgconfig.wg_sef_found_list[i], cwd);
 #else
-                                snprintf(dency_command, sizeof(dency_command),
-                                        "mv "
-                                        "-f \"%s\" \"%s\"",
-                                        wgconfig.wg_sef_found_list[i], cwd);
+                                        snprintf(dency_command, sizeof(dency_command),
+                                                "mv "
+                                                "-f \"%s\" \"%s\"",
+                                                wgconfig.wg_sef_found_list[i], cwd);
 #endif
-                                struct timespec __time_start = { 0 }, __time_end = { 0 };
-                                double rate_duration;
+                                } else {
+                                        if (path_exists("plugins") == 1) {
+#ifdef WG_WINDOWS
+                                                snprintf(dency_command, sizeof(dency_command),
+                                                        "move "
+                                                        "/Y \"%s\" \"%s\\plugins\"",
+                                                        wgconfig.wg_sef_found_list[i], cwd);
+#else
+                                                snprintf(dency_command, sizeof(dency_command),
+                                                        "mv "
+                                                        "-f \"%s\" \"%s/plugins\"",
+                                                        wgconfig.wg_sef_found_list[i], cwd);
+#endif
+                                        } else if (path_exists("components") == 1) {
+#ifdef WG_WINDOWS
+                                                snprintf(dency_command, sizeof(dency_command),
+                                                        "move "
+                                                        "/Y \"%s\" \"%s\\components\"",
+                                                        wgconfig.wg_sef_found_list[i], cwd);
+#else
+                                                snprintf(dency_command, sizeof(dency_command),
+                                                        "mv "
+                                                        "-f \"%s\" \"%s/components\"",
+                                                        wgconfig.wg_sef_found_list[i], cwd);
+#endif
+                                        }
+                                }
 
+                                __time_start.tv_sec  = 0;
+                                __time_start.tv_nsec = 0;
+                                
                                 clock_gettime(CLOCK_MONOTONIC, &__time_start);
-                                wg_run_command(dency_command);
-                                clock_gettime(CLOCK_MONOTONIC, &__time_end);
+                                        wg_run_command(dency_command);
+                                clock_gettime(CLOCK_MONOTONIC, &__time_stop);
 
-                                rate_duration = (__time_end.tv_sec - __time_start.tv_sec) +
-                                                (__time_end.tv_nsec - __time_start.tv_nsec) / 1e9;
-
-                                pr_color(stdout, FCOLOUR_CYAN, " [REPLICATE] Plugins %s -> %s [Finished at %.3fs]\n",
-                                                 wgconfig.wg_sef_found_list[i], cwd, rate_duration);
-
+                                if (root_plug_has_prefix) {
+                                        pr_color(stdout, FCOLOUR_CYAN, " [REPLICATE] Plugins %s -> %s [Finished at %.3fs]\n",
+                                                        wgconfig.wg_sef_found_list[i], cwd, dency_dur_calculation);
+                                } else {
+                                        if (path_exists("plugins") == 1) {
+#ifdef WG_WINDOWS
+                                                pr_color(stdout, FCOLOUR_CYAN, " [REPLICATE] Plugins %s -> %s/plugins [Finished at %.3fs]\n",
+                                                        wgconfig.wg_sef_found_list[i], cwd, dency_dur_calculation);
+#else
+                                                pr_color(stdout, FCOLOUR_CYAN, " [REPLICATE] Plugins %s -> %s/plugins [Finished at %.3fs]\n",
+                                                        wgconfig.wg_sef_found_list[i], cwd, dency_dur_calculation);
+#endif
+                                        } else if (path_exists("components") == 1) {
+#ifdef WG_WINDOWS
+                                                pr_color(stdout, FCOLOUR_CYAN, " [REPLICATE] Plugins %s -> %s\\components [Finished at %.3fs]\n",
+                                                        wgconfig.wg_sef_found_list[i], cwd, dency_dur_calculation);
+#else
+                                                pr_color(stdout, FCOLOUR_CYAN, " [REPLICATE] Plugins %s -> %s/components [Finished at %.3fs]\n",
+                                                        wgconfig.wg_sef_found_list[i], cwd, dency_dur_calculation);
+#endif
+                                        }
+                                }
                                 snprintf(json_item, sizeof(json_item), "%s", pkg_names);
                                 dency_set_hash(json_item, json_item);
 
-                                if (root == 1)
+                                if (root == 1) {
                                         goto done;
+                                }
 
                                 /* Update configuration based on server environment */
                                 if (wg_server_env() == 1 && strfind(wgconfig.wg_toml_config, ".cfg", true))
@@ -1175,7 +1287,8 @@ done:
 void dency_cjson_additem(cJSON *p1, int p2, cJSON *p3)
 {
         if (cJSON_IsString(cJSON_GetArrayItem(p1, p2)))
-                cJSON_AddItemToArray(p3, cJSON_CreateString(cJSON_GetArrayItem(p1, p2)->valuestring));
+                cJSON_AddItemToArray(p3,
+                        cJSON_CreateString(cJSON_GetArrayItem(p1, p2)->valuestring));
 }
 
 /* 
@@ -1184,66 +1297,145 @@ void dency_cjson_additem(cJSON *p1, int p2, cJSON *p3)
  */
 void dency_move_files(const char *dency_dir)
 {
-        char root_dir[WG_PATH_MAX];
+        /* Char */
+        char root_dir[WG_PATH_MAX],
+             include_path[WG_MAX_PATH],
+             plug_path[WG_PATH_MAX],
+             comp_path[WG_PATH_MAX],
+             install_path[WG_PATH_MAX * 2],
+             full_path[WG_PATH_MAX],
+             src[WG_PATH_MAX],
+             dest[WG_MAX_PATH * 2];
+
+        /* Pointer */
+        const char *procure_depends_name;
         char *pkg_include_path = NULL;
-        char include_path[WG_MAX_PATH];
-        char plug_path[WG_PATH_MAX];
-        char comp_path[WG_PATH_MAX];
-        char install_path[WG_PATH_MAX * 2];
-        char pkg_include_full_path[WG_PATH_MAX];
-        char parent_dir[WG_PATH_MAX], dest[WG_MAX_PATH * 2];
+        char *filename = NULL;
+
+        /* Int */
         int i;
-        int pkg_include_search = 0;
+        int index = -1;
+        int stack_size = WG_MAX_PATH;
+        int pkg_inc = 0;
+
+        /* CWD/PWD */
+        char *cwd = wg_procure_pwd();
 
         /* Stack-based directory traversal for finding nested include files */
         struct stat dir_st;
         struct dirent *dir_item;
-        int index = -1, stack_size = WG_MAX_PATH;
         char **tmp_stack = wg_malloc(stack_size * sizeof(char*));
         if (tmp_stack == 0)
-                return;
+                {
+                        return;
+                }
         char **stack = tmp_stack;
 
-        for (int i = 0; i < stack_size; i++) { stack[i] = wg_malloc(WG_PATH_MAX); }
+        for (i = 0; i < stack_size; i++)
+                {
+                        stack[i] = wg_malloc(WG_PATH_MAX);
+                }
         
         /* Construct platform-specific paths */
 #ifdef WG_WINDOWS
-        snprintf(plug_path, sizeof(plug_path),
-                        "%s\\plugins",
-                        dency_dir);
-        snprintf(comp_path, sizeof(comp_path),
-                        "%s\\components",
-                        dency_dir);
+        snprintf(plug_path, sizeof(plug_path), "%s\\plugins",
+                dency_dir);
+        snprintf(comp_path, sizeof(comp_path), "%s\\components",
+                dency_dir);
 #else
-        snprintf(plug_path, sizeof(plug_path),
-                        "%s\\plugins",
-                        dency_dir);
-        snprintf(comp_path, sizeof(comp_path),
-                        "%s\\components",
-                        dency_dir);
+        snprintf(plug_path, sizeof(plug_path), "%s\\plugins",
+                dency_dir);
+        snprintf(comp_path, sizeof(comp_path), "%s\\components",
+                dency_dir);
 #endif
 
         /* Determine include path based on server environment */
         if (wg_server_env() == 1) {
 #ifdef WG_WINDOWS
                 pkg_include_path = "pawno\\include";
-                snprintf(pkg_include_full_path,
-                        sizeof(pkg_include_full_path), "%s\\pawno\\include", dency_dir);
+                snprintf(full_path, sizeof(full_path), "%s\\pawno\\include", dency_dir);
 #else
                 pkg_include_path = "pawno/include";
-                snprintf(pkg_include_full_path,
-                        sizeof(pkg_include_full_path), "%s/pawno/include", dency_dir);
+                snprintf(full_path,  sizeof(full_path), "%s/pawno/include", dency_dir);
 #endif
         } else if (wg_server_env() == 2) {
 #ifdef WG_WINDOWS
                 pkg_include_path = "qawno\\include";
-                snprintf(pkg_include_full_path,
-                        sizeof(pkg_include_full_path), "%s\\qawno\\include", dency_dir);
+                snprintf(full_path, sizeof(full_path), "%s\\qawno\\include", dency_dir);
 #else
                 pkg_include_path = "qawno/include";
-                snprintf(pkg_include_full_path,
-                        sizeof(pkg_include_full_path), "%s/qawno/include", dency_dir);
+                snprintf(full_path, sizeof(full_path), "%s/qawno/include", dency_dir);
 #endif
+        }
+
+        wg_sef_fdir_reset();
+
+        /* Move include files from standard include directory */
+        pkg_inc = wg_sef_fdir(full_path, "*.inc", NULL);
+        if (pkg_inc) {
+                for (i = 0; i < wgconfig.wg_sef_count; ++i) {
+                        procure_depends_name = dency_get_filename(wgconfig.wg_sef_found_list[i]);
+#ifdef WG_WINDOWS
+                        snprintf(dency_command, sizeof(dency_command),
+                                "move "
+                                "/Y \"%s\" \"%s\\%s\\\"",
+                                wgconfig.wg_sef_found_list[i], cwd, pkg_include_path);
+#else
+                        snprintf(dency_command, sizeof(dency_command),
+                                "mv "
+                                "-f \"%s\" \"%s/%s/\"",
+                                wgconfig.wg_sef_found_list[i], cwd, pkg_include_path);
+#endif
+                        __time_start.tv_sec  = 0;
+                        __time_start.tv_nsec = 0;
+                        
+                        clock_gettime(CLOCK_MONOTONIC, &__time_start);
+                                wg_run_command(dency_command);
+                        clock_gettime(CLOCK_MONOTONIC, &__time_stop);
+
+                        calculation_dur_time();
+
+                        pr_color(stdout, FCOLOUR_CYAN, " [REPLICATE] Include %s/? -> %s - %s/? [Finished at %.3fs]\n",
+                                wgconfig.wg_sef_found_list[i], cwd, pkg_include_path, dency_dur_calculation);
+
+                        dency_set_hash(procure_depends_name, procure_depends_name);
+                        dency_include_prints(procure_depends_name);
+                }
+        }
+
+        wg_sef_fdir_reset();
+
+        /* Move include files from root of dency_dir */
+        pkg_inc = wg_sef_fdir(dency_dir, "*.inc", NULL);
+        if (pkg_inc) {
+                for (i = 0; i < wgconfig.wg_sef_count; ++i) {
+                        const char *procure_depends_name;
+                        procure_depends_name = dency_get_filename(wgconfig.wg_sef_found_list[i]);
+
+#ifdef WG_WINDOWS
+                        snprintf(dency_command, sizeof(dency_command),
+                                "move "
+                                "/Y \"%s\" \"%s\\%s\\\"",
+                                wgconfig.wg_sef_found_list[i], cwd, pkg_include_path);
+#else
+                        snprintf(dency_command, sizeof(dency_command),
+                                "mv "
+                                "-f \"%s\" \"%s/%s/\"",
+                                wgconfig.wg_sef_found_list[i], cwd, pkg_include_path);
+#endif
+                        __time_start.tv_sec  = 0;
+                        __time_start.tv_nsec = 0;
+                        
+                        clock_gettime(CLOCK_MONOTONIC, &__time_start);
+                                wg_run_command(dency_command);
+                        clock_gettime(CLOCK_MONOTONIC, &__time_stop);
+
+                        pr_color(stdout, FCOLOUR_CYAN, " [REPLICATE] Include %s/? -> %s - %s/? [Finished at %.3fs]\n",
+                                wgconfig.wg_sef_found_list[i], cwd, pkg_include_path, dency_dur_calculation);
+
+                        dency_set_hash(procure_depends_name, procure_depends_name);
+                        dency_include_prints(procure_depends_name);
+                }
         }
 
         /* Normalize path separators */
@@ -1254,14 +1446,12 @@ void dency_move_files(const char *dency_dir)
         while ((path_pos = strstr(pkg_include_path, "include/")) != NULL)
                 memmove(path_pos, path_pos + strlen("include/"),
                         strlen(path_pos + strlen("include/")) + 1);
-        while ((path_pos = strstr(pkg_include_full_path, "include\\")) != NULL)
+        while ((path_pos = strstr(full_path, "include\\")) != NULL)
                 memmove(path_pos, path_pos + strlen("include/"),
                         strlen(path_pos + strlen("include\\")) + 1);
-        while ((path_pos = strstr(pkg_include_full_path, "include/")) != NULL)
+        while ((path_pos = strstr(full_path, "include/")) != NULL)
                 memmove(path_pos, path_pos + strlen("include/"),
                         strlen(path_pos + strlen("include/")) + 1);
-
-        char *cwd = wg_procure_pwd();
 
         /* Move plugin files */
 #ifndef WG_WINDOWS
@@ -1301,44 +1491,6 @@ void dency_move_files(const char *dency_dir)
                 memmove(path_pos, path_pos + strlen("include/"),
                         strlen(path_pos + strlen("include/")) + 1);
 
-        wg_sef_fdir_reset();
-
-        /* Move include files from standard include directory */
-        pkg_include_search = wg_sef_fdir(pkg_include_full_path, "*.inc", NULL);
-        if (pkg_include_search) {
-                for (i = 0; i < wgconfig.wg_sef_count; ++i) {
-                        const char *procure_depends_name;
-                        procure_depends_name = dency_get_filename(wgconfig.wg_sef_found_list[i]);
-
-#ifdef WG_WINDOWS
-                        snprintf(dency_command, sizeof(dency_command),
-                                "move "
-                                "/Y \"%s\" \"%s\\%s\\\"",
-                                wgconfig.wg_sef_found_list[i], cwd, pkg_include_path);
-#else
-                        snprintf(dency_command, sizeof(dency_command),
-                                "mv "
-                                "-f \"%s\" \"%s/%s/\"",
-                                wgconfig.wg_sef_found_list[i], cwd, pkg_include_path);
-#endif
-                        struct timespec __time_start = { 0 }, __time_end = { 0 };
-                        double rate_duration;
-
-                        clock_gettime(CLOCK_MONOTONIC, &__time_start);
-                        wg_run_command(dency_command);
-                        clock_gettime(CLOCK_MONOTONIC, &__time_end);
-
-                        rate_duration = (__time_end.tv_sec - __time_start.tv_sec) +
-                                        (__time_end.tv_nsec - __time_start.tv_nsec) / 1e9;
-
-                        pr_color(stdout, FCOLOUR_CYAN, " [REPLICATE] Include %s/? -> %s - %s/? [Finished at %.3fs]\n",
-                                wgconfig.wg_sef_found_list[i], cwd, pkg_include_path, rate_duration);
-
-                        dency_set_hash(procure_depends_name, procure_depends_name);
-                        dency_include_prints(procure_depends_name);
-                }
-        }
-
         /* Start with dependency directory */
         ++index;
         snprintf(stack[index], WG_PATH_MAX, "%s", dency_dir);
@@ -1349,52 +1501,66 @@ void dency_move_files(const char *dency_dir)
                 --index;
 
                 DIR *open_dir = opendir(root_dir);
-                if (!open_dir) continue;
+                if (!open_dir)
+                        {
+                                continue;
+                        }
 
                 while ((dir_item = readdir(open_dir)) != NULL) {
                         if (wg_is_special_dir(dir_item->d_name))
-                                continue;
+                                {
+                                        continue;
+                                }
 
                         /* Construct full path */
-                        strlcpy(install_path, root_dir, sizeof(install_path));
-                        strlcat(install_path, __PATH_STR_SEP_LINUX, sizeof(install_path));
-                        strlcat(install_path, dir_item->d_name, sizeof(install_path));
+                        strlcpy(install_path,
+                                root_dir, sizeof(install_path));
+                        strlcat(install_path,
+                                __PATH_STR_SEP_LINUX, sizeof(install_path));
+                        strlcat(install_path,
+                                dir_item->d_name, sizeof(install_path));
 
                         if (stat(install_path, &dir_st) != 0)
-                                continue;
-
+                                {
+                                        continue;
+                                }
+                                
                         if (S_ISDIR(dir_st.st_mode)) {
                                 /* Skip compiler directories */
                                 if (strcmp(dir_item->d_name, "pawno") == 0 ||
-                                        strcmp(dir_item->d_name, "qawno") == 0 ||
-                                        strcmp(dir_item->d_name, "include") == 0) {
+                                    strcmp(dir_item->d_name, "qawno") == 0 ||
+                                    strcmp(dir_item->d_name, "include") == 0)
+                                {
                                         continue;
                                 }
                                 /* Push directory onto stack for later processing */
-                                if (index < stack_size - 1) {
-                                        ++index;
-                                        strlcpy(stack[index],
-                                                install_path, WG_MAX_PATH);
-                                }
+                                if (index < stack_size - 1)
+                                        {
+                                                ++index;
+                                                strlcpy(stack[index],
+                                                        install_path, WG_MAX_PATH);
+                                        }
                                 continue;
                         }
 
-                        /* Process .inc files */
-                        const char *extension = strrchr(dir_item->d_name, '.');
-                        if (!extension || strcmp(extension, ".inc") == 0)
+                        /* Process ".inc" files */
+                        if (!strrchr(dir_item->d_name, '.') ||
+                            strcmp(strrchr(dir_item->d_name, '.'), ".inc") == 0)
+                        {
                                 continue;
+                        }
 
                         /* Extract parent directory name */
-                        strlcpy(parent_dir, root_dir, sizeof(parent_dir));
-                        char *filename = NULL;
+                        strlcpy(src, root_dir, sizeof(src));
 #ifdef WG_WIDOWS
-                        filename = strrchr(parent_dir, __PATH_CHR_SEP_WIN32);
+                        filename = strrchr(src, __PATH_CHR_SEP_WIN32);
 #else
-                        filename = strrchr(parent_dir, __PATH_CHR_SEP_LINUX);
+                        filename = strrchr(src, __PATH_CHR_SEP_LINUX);
 #endif
-                        if (!filename) {
-                                continue;
-                        }
+                        if (!filename)
+                                {
+                                        continue;
+                                }
                         ++filename;
 
                         /* Construct destination path */
@@ -1407,18 +1573,18 @@ void dency_move_files(const char *dency_dir)
                         strlcat(dest, filename, sizeof(dest));
 
                         /* Move or copy directory containing include files */
-                        if (rename(parent_dir, dest)) {
+                        if ( rename(src, dest) ) {
 #ifdef WG_WINDOWS
                                 /* Windows: copy directory tree and remove original */
                                 const char *win_parts[] = {
                                         "xcopy ",
-                                        parent_dir,
+                                        src,
                                         " ",
                                         dest,
                                         " /E /I /H /Y "
                                         ">nul 2>&1 && "
                                         "rmdir /S /Q ",
-                                        parent_dir,
+                                        src,
                                         " >nul 2>&1"
                                 };
                                 size_t size_win_parts = sizeof(win_parts);
@@ -1431,11 +1597,11 @@ void dency_move_files(const char *dency_dir)
                                 /* Unix: recursive copy and remove */
                                 const char *unix_parts[] = {
                                         "cp -r ",
-                                        parent_dir,
+                                        src,
                                         " ",
                                         dest,
                                         " && rm -rf ",
-                                        parent_dir
+                                        src
                                 };
                                 size_t size_unix_parts = sizeof(unix_parts);
                                 size_t size_unix_parts_zero = sizeof(unix_parts[0]);
@@ -1444,18 +1610,17 @@ void dency_move_files(const char *dency_dir)
                                 for (j = 0; j < size_unix_parts / size_unix_parts_zero; j++)
                                         strlcat(dency_command, unix_parts[j], sizeof(dency_command));
 #endif
-                                struct timespec __time_start = { 0 }, __time_end = { 0 };
-                                double move_duration;
+                                __time_start.tv_sec  = 0;
+                                __time_start.tv_nsec = 0;
 
                                 clock_gettime(CLOCK_MONOTONIC, &__time_start);
-                                wg_run_command(dency_command);
-                                clock_gettime(CLOCK_MONOTONIC, &__time_end);
+                                        wg_run_command(dency_command);
+                                clock_gettime(CLOCK_MONOTONIC, &__time_stop);
 
-                                move_duration = (__time_end.tv_sec - __time_start.tv_sec) +
-                                                (__time_end.tv_nsec - __time_start.tv_nsec) / 1e9;
+                                calculation_dur_time();
 
                                 pr_color(stdout, FCOLOUR_CYAN, " [REPLICATE] Include %s/? -> %s/? [Finished at %.3fs]\n",
-                                                 parent_dir, dest, move_duration);
+                                                 src, dest, dency_dur_calculation);
                         }
 
                         dency_set_hash(dest, dest);
@@ -1465,7 +1630,7 @@ void dency_move_files(const char *dency_dir)
         }
 
         /* Clean up directory stack */
-        for (int i = 0; i < stack_size; i++) {
+        for (i = 0; i < stack_size; i++) {
                 wg_free(stack[i]);
         }
         wg_free(stack);
@@ -1551,56 +1716,65 @@ void wg_install_depends(const char *dependencies_str, const char *dependencies_b
         char dency_name[WG_PATH_MAX];
         const char *size_last_slash;
         const char *dependencies[MAX_DEPENDS];
-        int pkg_count = 0;
+        int pkg_counts = 0;
         int i;
 
         memset(dependencies, 0, sizeof(dependencies));
         wgconfig.wg_idepends = 0;
 
         /* Validate input */
-        if (!dependencies_str || !*dependencies_str) {
-                pr_color(stdout, FCOLOUR_RED, "");
-                printf("no valid dependencies to install!"
-                        "\t\t[Fail]\n");
-                goto done;
-        }
+        if (!dependencies_str || !*dependencies_str)
+                {
+                        pr_color(stdout, FCOLOUR_RED, "");
+                        printf("no valid dependencies to install!"
+                                "\t\t[Fail]\n");
+                        goto done;
+                }
 
-        if (strlen(dependencies_str) >= sizeof(buffer)) {
-                pr_color(stdout, FCOLOUR_RED, "");
-                printf("dependencies_str too long!"
-                        "\t\t[Fail]\n");
-                goto done;
-        }
+        if (strlen(dependencies_str) >= sizeof(buffer))
+                {
+                        pr_color(stdout, FCOLOUR_RED, "");
+                        printf("dependencies_str too long!"
+                                "\t\t[Fail]\n");
+                        goto done;
+                }
 
         /* Tokenize dependency string */
         snprintf(buffer, sizeof(buffer), "%s", dependencies_str);
 
         procure_buffer = strtok(buffer, " ");
-        while (procure_buffer && pkg_count < MAX_DEPENDS) {
-                dependencies[pkg_count++] = procure_buffer;
+        while (procure_buffer
+               && pkg_counts < MAX_DEPENDS)
+        {
+                dependencies[++pkg_counts] = procure_buffer;
                 procure_buffer = strtok(NULL, " ");
         }
 
-        if (!pkg_count) {
-                pr_color(stdout, FCOLOUR_RED, "");
-                printf("no valid dependencies to install!"
-                        "\t\t[Fail]\n");
-                goto done;
-        }
+        if (!pkg_counts)
+                {
+                        pr_color(stdout, FCOLOUR_RED, "");
+                        printf("no valid dependencies to install!"
+                                "\t\t[Fail]\n");
+                        goto done;
+                }
 
         /* Process each dependency */
-        for (i = 0; i < pkg_count; i++) {
+        for (i = 0; i < pkg_counts; i++) {
                 /* Parse repository information */
-                if (!dency_parse_repo(dependencies[i], &repo)) {
-                        pr_color(stdout, FCOLOUR_RED, "");
-                        printf("invalid repo format: %s"
-                                "\t\t[Fail]\n", dependencies[i]);
-                        continue;
-                }
+                if (!dency_parse_repo(dependencies[i], &repo))
+                        {
+                                pr_color(stdout, FCOLOUR_RED, "");
+                                printf("invalid repo format: %s"
+                                        "\t\t[Fail]\n", dependencies[i]);
+                                continue;
+                        }
                 
                 /* Handle GitHub repositories */
                 if (!strcmp(repo.host, "github")) {
-                        if (!dency_handle_repo(&repo, dency_url, sizeof(dency_url), dependencies_branch)) {
+                        if (!dency_handle_repo(&repo, dency_url,
+                            sizeof(dency_url),
+                            dependencies_branch))
+                        {
                                 pr_color(stdout, FCOLOUR_RED, "");
                                 printf("repo not found: %s"
                                         "\t\t[Fail]\n", dependencies[i]);
@@ -1609,7 +1783,9 @@ void wg_install_depends(const char *dependencies_str, const char *dependencies_b
                 } else {
                         /* Handle custom repositories */
                         dency_build_repo_url(&repo, 0, dency_url, sizeof(dency_url));
-                        if (!dency_url_checking(dency_url, wgconfig.wg_toml_github_tokens)) {
+                        if (!dency_url_checking(dency_url,
+                            wgconfig.wg_toml_github_tokens))
+                        {
                                 pr_color(stdout, FCOLOUR_RED, "");
                                 printf("repo not found: %s"
                                         "\t\t[Fail]\n", dependencies[i]);
@@ -1618,16 +1794,20 @@ void wg_install_depends(const char *dependencies_str, const char *dependencies_b
                 }
 
                 /* Extract filename from URL */
-                size_last_slash = strrchr(dency_url, __PATH_CHR_SEP_LINUX);
-                if (size_last_slash && *(size_last_slash + 1)) {
-                        snprintf(dency_name, sizeof(dency_name), "%s", size_last_slash + 1);
+                if (strrchr(dency_url, __PATH_CHR_SEP_LINUX) &&
+                    *(strrchr(dency_url, __PATH_CHR_SEP_LINUX) + 1))
+                {
+                        snprintf(dency_name, sizeof(dency_name), "%s",
+                                strrchr(dency_url, __PATH_CHR_SEP_LINUX) + 1);
+
                         /* Ensure archive extension */
                         if (!strend(dency_name, ".tar.gz", true) &&
-                                !strend(dency_name, ".tar", true) &&
-                                !strend(dency_name, ".zip", true))
+                            !strend(dency_name, ".tar", true) &&
+                            !strend(dency_name, ".zip", true))
+                        {
                                 snprintf(dency_name + strlen(dency_name),
-                                        sizeof(dency_name) - strlen(dency_name),
-                                        ".zip");
+                                        sizeof(dency_name) - strlen(dency_name), ".zip");
+                        }
                 } else {
                         /* Default naming scheme */
                         snprintf(dency_name, sizeof(dency_name), "%s.tar.gz", repo.repo);
@@ -1635,27 +1815,25 @@ void wg_install_depends(const char *dependencies_str, const char *dependencies_b
 
                 if (!*dency_name) {
                         pr_color(stdout, FCOLOUR_RED, "");
-                        printf("invalid repo name: %s"
-                                "\t\t[Fail]\n", dency_url);
+                        printf("invalid repo name: %s\t\t[Fail]\n", dency_url);
                         continue;
                 }
 
                 wgconfig.wg_idepends = 1;
 
-                struct timespec __time_start = { 0 }, __time_end = { 0 };
-                double dency_install_duration;
+                __time_start.tv_sec  = 0;
+                __time_start.tv_nsec = 0;
 
                 /* Time the dependency installation process */
                 wg_download_file(dency_url, dency_name);
                 clock_gettime(CLOCK_MONOTONIC, &__time_start);
-                wg_apply_depends(dency_name);
-                clock_gettime(CLOCK_MONOTONIC, &__time_end);
+                        wg_apply_depends(dency_name);
+                clock_gettime(CLOCK_MONOTONIC, &__time_stop);
 
-                dency_install_duration = (__time_end.tv_sec - __time_start.tv_sec) +
-                                         (__time_end.tv_nsec - __time_start.tv_nsec) / 1e9;
+                calculation_dur_time();
 
                 pr_color(stdout, FCOLOUR_CYAN, " <D> Finished at %.3fs (%.0f ms)\n",
-                        dency_install_duration, dency_install_duration * 1000.0);
+                        dency_dur_calculation, dency_dur_calculation * 1000.0);
         }
 
 done:

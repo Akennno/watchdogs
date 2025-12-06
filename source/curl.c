@@ -1062,7 +1062,7 @@ int wg_download_file(const char *url, const char *output_filename)
                 
                 if (create_debugging == 0) {
                         create_debugging = 1;
-                        pr_color(stdout, FCOLOUR_CYAN, " %% Enable HTTP debugging? ");
+                        pr_color(stdout, FCOLOUR_CYAN, " * Enable HTTP debugging? ");
                         char *debug_http = readline("(y/n): ");
                         if (debug_http && (debug_http[0] == 'Y' || debug_http[0] == 'y')) {
                                 always_create_debugging = 1;

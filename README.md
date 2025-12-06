@@ -204,8 +204,8 @@ pkg install x11-repo
 # - Steps:
 #   1. Go to https://github.com/features/codespaces
 #   2. Open a repository you want to work with
-#   3. Click "Code" > "Codespaces" > "Create Codespaces on main/dev"
-#   4. Choose main/dev branch and open in Browser mode
+#   3. Click "Code" > "Codespaces" > "Create Codespaces on main"
+#   4. Choose main branch and open in Browser mode
 # - This allows a lightweight Linux-like environment without installing Termux
 # - Simple usage: you can run shell, git, and code directly in the browser
 
@@ -270,7 +270,7 @@ docker rm -f <container-name>              # Remove the container
 
 1. Click the "**<> Code**" button.
 2. Select "**Codespaces**".
-3. Choose "**Create codespace on main/dev**" to create a new Codespace on the *main/dev* branch.
+3. Choose "**Create codespace on main**" to create a new Codespace on the *main* branch.
 4. Once the Codespace opens in the VSCode interface:
    - Click the **three-line menu** (≡) in the top-left corner.
    - Select **Terminal**.
